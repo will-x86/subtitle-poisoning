@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,7 +22,18 @@ func init() {
 	}
 }
 
+var beeLines []string
+
 func main() {
+	bee, err := astisub.OpenFile("./bee.srt")
+	if err != nil {
+		panic(err)
+	}
+	for _, x := range bee.Items {
+		for _, d := range x.Lines {
+			beeLines = append(beeLines, d.String())
+		}
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -181,23 +193,27 @@ func processSubtitle(inputFile, outputFile string) error {
 	}
 
 	a.Styles.Body = append(a.Styles.Body, fakeStyle)
-
-	for _, v := range a.Events.Body {
+	var events []ass.Event
+	for x, y := range beeLines {
 		event := ass.Createevent(
 			"Dialogue",
 			0,
-			v.Start,
-			v.End,
+			a.Events.Body[x%len(a.Events.Body)].Start,
+			a.Events.Body[x%len(a.Events.Body)].End,
 			"fake",
 			"",
 			0,
 			0,
 			0,
 			"",
-			"ahh",
+			y,
 		)
-		a.Events.Body = append(a.Events.Body, *event)
+		events = append(events, *event)
 	}
+	for k := range events {
+		a.Events.Body = append(a.Events.Body, events[k])
+	}
+	rand.Shuffle(len(a.Events.Body), func(i, j int) { a.Events.Body[i], a.Events.Body[j] = a.Events.Body[j], a.Events.Body[i] })
 
 	err = ass.WriteAss(a, outputFile)
 	if err != nil {
