@@ -1,27 +1,108 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/asticode/go-astisub"
+	"github.com/joho/godotenv"
 	"github.com/will-x86/subtitle-poisoning/libgosubs/ass"
 )
 
-func main() {
-	s1, err := astisub.OpenFile("./subtitles/youtube-orig.srt")
-	if err != nil {
-		panic(err)
+func init() {
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("Error loading .env file")
 	}
-	// Create the output file
-	f, err := os.Create("./subtitles/parsed.ass")
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	fs := http.FileServer(http.Dir("ui"))
+	http.Handle("/", fs)
+
+	http.HandleFunc("/convert", handleConvert)
+
+	log.Printf("Server starting on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+func handleConvert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	err := r.ParseMultipartForm(10 << 20)
 	if err != nil {
-		panic(err)
+		http.Error(w, "Unable to parse form", http.StatusBadRequest)
+		return
+	}
+
+	file, handler, err := r.FormFile("subtitle")
+	if err != nil {
+		http.Error(w, "Error retrieving file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	tempDir := "./temp"
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		http.Error(w, "Server error", http.StatusInternalServerError)
+		return
+	}
+
+	tempFile := filepath.Join(tempDir, fmt.Sprintf("%d_%s", time.Now().UnixNano(), handler.Filename))
+	f, err := os.Create(tempFile)
+	if err != nil {
+		http.Error(w, "Unable to create temp file", http.StatusInternalServerError)
+		return
 	}
 	defer f.Close()
+	defer os.Remove(tempFile)
 
-	// Initialize Metadata if nil
+	_, err = io.Copy(f, file)
+	if err != nil {
+		http.Error(w, "Unable to save file", http.StatusInternalServerError)
+		return
+	}
+
+	outputFile := filepath.Join(tempDir, fmt.Sprintf("%d_output.ass", time.Now().UnixNano()))
+	if err := processSubtitle(tempFile, outputFile); err != nil {
+		http.Error(w, "Error processing subtitle", http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(outputFile)
+
+	w.Header().Set("Content-Disposition", "attachment; filename=converted.ass")
+	w.Header().Set("Content-Type", "application/octet-stream")
+
+	http.ServeFile(w, r, outputFile)
+}
+
+func processSubtitle(inputFile, outputFile string) error {
+	s1, err := astisub.OpenFile(inputFile)
+	if err != nil {
+		return fmt.Errorf("failed to open input file: %w", err)
+	}
+
+	tempParsedAss := filepath.Join(filepath.Dir(outputFile), "parsed.ass")
+	f, err := os.Create(tempParsedAss)
+	if err != nil {
+		return fmt.Errorf("failed to create temporary ASS file: %w", err)
+	}
+	defer os.Remove(tempParsedAss)
+	defer f.Close()
+
 	if s1.Metadata == nil {
 		s1.Metadata = &astisub.Metadata{
 			SSAScriptType: "v4.00+",
@@ -30,17 +111,16 @@ func main() {
 		s1.Metadata.SSAScriptType = "v4.00+"
 	}
 
-	// Write using WriteSSA
 	err = s1.WriteToSSA(f)
 	if err != nil {
-		panic(err)
-	}
-	a, err := ass.ParseAss("./subtitles/parsed.ass")
-	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to write SSA: %w", err)
 	}
 
-	// Add default style
+	a, err := ass.ParseAss(tempParsedAss)
+	if err != nil {
+		return fmt.Errorf("failed to parse ASS: %w", err)
+	}
+
 	defaultStyle := ass.Style{
 		Name:            "real",
 		Fontname:        "Arial",
@@ -65,40 +145,23 @@ func main() {
 		MarginR:         10,
 		MarginV:         10,
 		Encoding:        1,
-		/*        [V4+ Styles]
-		Format: , Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment,
-		Style: ,H0,0,0,0,0,100,100,0,0,1,1,0
-		*/
-
 	}
 
-	// Clear existing styles and add default
 	a.Styles.Body = []ass.Style{defaultStyle}
-
-	// Apply Default style to all existing events
 	for i := range a.Events.Body {
 		a.Events.Body[i].Style = "real"
 	}
 
 	removeOverlappingEvents(&a.Events.Body)
 
-	/*	log.Printf("%+v\n", a.ScriptInfo.Body)
-		log.Printf("%+v\n", a.PGarbage)
-		log.Printf("%+v\n", a.Styles)
-		log.Printf("%+v\n", a.Events)
-		for _, v := range a.Styles.Body {
-			log.Printf("%+v\n", v)
-		}
-	*/
-	// Create a new style for invisible text
 	fakeStyle := ass.Style{
 		Name:            "fake",
 		Fontname:        "Arial",
-		Fontsize:        0,            // Minimal size
-		PrimaryColour:   "&HFF000000", // Fully transparent (FF alpha)
-		SecondaryColour: "&HFF000000", // Fully transparent
-		OutlineColour:   "&HFF000000", // Fully transparent
-		Backcolour:      "&HFF000000", // Fully transparent
+		Fontsize:        0,
+		PrimaryColour:   "&HFF000000",
+		SecondaryColour: "&HFF000000",
+		OutlineColour:   "&HFF000000",
+		Backcolour:      "&HFF000000",
 		Bold:            0,
 		Italic:          0,
 		Underline:       0,
@@ -107,7 +170,7 @@ func main() {
 		ScaleY:          0,
 		Spacing:         0,
 		Angle:           0,
-		BorderStyle:     0,
+		BorderStyle:     1,
 		Outline:         0,
 		Shadow:          0,
 		Alignment:       4,
@@ -118,7 +181,6 @@ func main() {
 	}
 
 	a.Styles.Body = append(a.Styles.Body, fakeStyle)
-	log.Println(a.Styles.Format)
 
 	for _, v := range a.Events.Body {
 		event := ass.Createevent(
@@ -136,10 +198,13 @@ func main() {
 		)
 		a.Events.Body = append(a.Events.Body, *event)
 	}
-	err = ass.WriteAss(a, "./subtitles/out/bold.ass")
+
+	err = ass.WriteAss(a, outputFile)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("failed to write final ASS: %w", err)
 	}
+
+	return nil
 }
 
 func removeOverlappingEvents(events *[]ass.Event) {

@@ -2,7 +2,10 @@ module github.com/will-x86/subtitle-poisoning
 
 go 1.23.4
 
-require github.com/asticode/go-astisub v0.32.0
+require (
+	github.com/asticode/go-astisub v0.32.0
+	github.com/joho/godotenv v1.5.1
+)
 
 require (
 	github.com/asticode/go-astikit v0.20.0 // indirect
