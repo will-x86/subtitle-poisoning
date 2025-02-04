@@ -169,26 +169,26 @@ func processSubtitle(inputFile, outputFile string) error {
 	fakeStyle := ass.Style{
 		Name:            "fake",
 		Fontname:        "Arial",
-		Fontsize:        0,
-		PrimaryColour:   "&HFF000000",
-		SecondaryColour: "&HFF000000",
-		OutlineColour:   "&HFF000000",
-		Backcolour:      "&HFF000000",
+		Fontsize:        1,
+		PrimaryColour:   "&H00000000",
+		SecondaryColour: "&H00000000",
+		OutlineColour:   "&H00000000",
+		Backcolour:      "&H00000000",
 		Bold:            0,
 		Italic:          0,
 		Underline:       0,
 		StrikeOut:       0,
-		ScaleX:          0,
-		ScaleY:          0,
+		ScaleX:          1,
+		ScaleY:          1,
 		Spacing:         0,
 		Angle:           0,
 		BorderStyle:     1,
 		Outline:         0,
 		Shadow:          0,
-		Alignment:       4,
-		MarginL:         10,
-		MarginR:         10,
-		MarginV:         10,
+		Alignment:       2,
+		MarginL:         0,
+		MarginR:         0,
+		MarginV:         2000,
 		Encoding:        0,
 	}
 
@@ -206,7 +206,7 @@ func processSubtitle(inputFile, outputFile string) error {
 			0,
 			0,
 			"",
-			y,
+			`{\pos(-9999,-9999)}`+y, // Position far off screen
 		)
 		events = append(events, *event)
 	}
